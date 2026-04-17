@@ -19,7 +19,7 @@ from ..models.schemas import (
     PreviewRequest,
     PreviewResponse,
 )
-from ..services.data_extractor import DATA_TYPE_DISPLAY
+from ..services.data_extractor import DATA_TYPE_DISPLAY, build_trial_balance
 from ..services.exporters.csv_exporter import export_csv
 from ..services.exporters.json_exporter import export_json
 from ..services.exporters.parquet_exporter import export_parquet
@@ -137,8 +137,10 @@ async def export_data(body: ExportRequest) -> ExportResponse:
         if export_format == "csv":
             filename = export_csv(data_to_export, export_dir, base_name)
         elif export_format == "xlsx":
+            trial_balance = build_trial_balance(session.parsed_data)
             filename = export_xlsx(data_to_export, export_dir, base_name,
-                                   validation_checks=session.validation_checks or None)
+                                   validation_checks=session.validation_checks or None,
+                                   trial_balance=trial_balance)
         elif export_format == "json":
             filename = export_json(data_to_export, export_dir, base_name)
         elif export_format == "parquet":

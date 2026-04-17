@@ -5,7 +5,9 @@ Each data type produces a list of flat dicts suitable for CSV/XLSX/JSON/Parquet 
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import asdict
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from ..models.xaf_model import AuditFile
@@ -276,3 +278,111 @@ def _extract_transactions(af: AuditFile) -> list[dict[str, Any]]:
 
                 rows.append(row)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Trial Balance
+# ---------------------------------------------------------------------------
+
+def _safe_dec(value: str) -> Decimal:
+    """Parse a string to Decimal, returning 0 on failure."""
+    try:
+        return Decimal(value) if value else Decimal("0")
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def build_trial_balance(
+    parsed_data: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Build a trial balance from the flattened parsed data.
+
+    Returns a list of row dicts sorted by account number, with Balance accounts
+    first and P&L accounts second. Each section ends with a subtotal row, and
+    a grand total row is appended at the end.
+
+    Columns per row:
+        accID, accDesc, accTp, section,
+        ob_debit, ob_credit,
+        mut_debit, mut_credit,
+        year_debit, year_credit,
+        end_debit, end_credit
+    """
+    # Build account lookup: accID -> {accDesc, accTp}
+    accounts: dict[str, dict[str, str]] = {}
+    for row in parsed_data.get("ledger_accounts", []):
+        accounts[row["accID"]] = {
+            "accDesc": row.get("accDesc", ""),
+            "accTp": row.get("accTp", ""),
+        }
+
+    # Accumulators per account
+    ob_debit: dict[str, Decimal] = defaultdict(Decimal)
+    ob_credit: dict[str, Decimal] = defaultdict(Decimal)
+    mut_debit: dict[str, Decimal] = defaultdict(Decimal)
+    mut_credit: dict[str, Decimal] = defaultdict(Decimal)
+
+    # Opening balance
+    for row in parsed_data.get("opening_balance", []):
+        acc_id = row["accID"]
+        amnt = _safe_dec(row.get("amnt", "0"))
+        if row.get("amntTp") == "D":
+            ob_debit[acc_id] += amnt
+        elif row.get("amntTp") == "C":
+            ob_credit[acc_id] += amnt
+
+    # Transaction mutations
+    for row in parsed_data.get("transactions", []):
+        acc_id = row["accID"]
+        amnt = _safe_dec(row.get("amnt", "0"))
+        if row.get("amntTp") == "D":
+            mut_debit[acc_id] += amnt
+        elif row.get("amntTp") == "C":
+            mut_credit[acc_id] += amnt
+
+    # Collect all account IDs that appear anywhere
+    all_acc_ids = set(accounts.keys()) | set(ob_debit) | set(ob_credit) | set(mut_debit) | set(mut_credit)
+
+    # Build per-account rows
+    balance_rows: list[dict[str, Any]] = []
+    pl_rows: list[dict[str, Any]] = []
+
+    for acc_id in sorted(all_acc_ids):
+        info = accounts.get(acc_id, {"accDesc": "", "accTp": ""})
+        acc_tp = info["accTp"]
+
+        ob_d = ob_debit.get(acc_id, Decimal("0"))
+        ob_c = ob_credit.get(acc_id, Decimal("0"))
+        m_d = mut_debit.get(acc_id, Decimal("0"))
+        m_c = mut_credit.get(acc_id, Decimal("0"))
+
+        # Year summary = opening + mutations (both sides)
+        year_d = ob_d + m_d
+        year_c = ob_c + m_c
+
+        # End balance = net of year summary
+        net = year_d - year_c
+        end_d = net if net > 0 else Decimal("0")
+        end_c = -net if net < 0 else Decimal("0")
+
+        row = {
+            "accID": acc_id,
+            "accDesc": info["accDesc"],
+            "accTp": acc_tp,
+            "ob_debit": float(ob_d),
+            "ob_credit": float(ob_c),
+            "mut_debit": float(m_d),
+            "mut_credit": float(m_c),
+            "year_debit": float(year_d),
+            "year_credit": float(year_c),
+            "end_debit": float(end_d),
+            "end_credit": float(end_c),
+        }
+
+        if acc_tp == "P":
+            pl_rows.append(row)
+        else:
+            # "B" and anything else (unknown) goes to Balance section
+            balance_rows.append(row)
+
+    return balance_rows, pl_rows

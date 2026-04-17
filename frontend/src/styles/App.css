@@ -160,6 +160,12 @@ span.ant-upload-wrapper .ant-upload-drag {
   margin-top: 0;
 }
 
+.validation-net-result {
+  border-top: 1px solid var(--border-color, #303030);
+  padding-top: 6px !important;
+  margin-top: 4px;
+}
+
 /* Data type selector */
 .data-type-list {
   margin-bottom: 24px;

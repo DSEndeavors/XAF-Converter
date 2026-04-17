@@ -146,6 +146,48 @@ def validate_xaf(af: AuditFile) -> ValidationResult:
             passed=declared_debit == declared_credit,
         ))
 
+    # P&L Net Result: sum all transactions on accounts with accTp = "P"
+    if txns is not None and af.ledgerAccounts:
+        pl_accounts = {la.accID for la in af.ledgerAccounts if la.accTp == "P"}
+
+        if pl_accounts:
+            pl_debit = Decimal("0")
+            pl_credit = Decimal("0")
+
+            for journal in txns.journals:
+                for txn in journal.transactions:
+                    for line in txn.lines:
+                        if line.accID in pl_accounts:
+                            amnt = _safe_decimal(line.amnt)
+                            if line.amntTp == "D":
+                                pl_debit += amnt
+                            elif line.amntTp == "C":
+                                pl_credit += amnt
+
+            net_result = pl_credit - pl_debit
+
+            checks.append(ValidationCheck(
+                section="P&L Summary",
+                check="Total Revenue (Credit)",
+                declared="—",
+                computed=_format_decimal(pl_credit),
+                passed=True,
+            ))
+            checks.append(ValidationCheck(
+                section="P&L Summary",
+                check="Total Expenses (Debit)",
+                declared="—",
+                computed=_format_decimal(pl_debit),
+                passed=True,
+            ))
+            checks.append(ValidationCheck(
+                section="P&L Summary",
+                check="Net Result",
+                declared="Profit" if net_result >= 0 else "Loss",
+                computed=_format_decimal(net_result),
+                passed=True,
+            ))
+
     passed_count = sum(1 for c in checks if c.passed)
     total_count = len(checks)
     all_passed = passed_count == total_count

@@ -4,6 +4,7 @@ import {
   SafetyCertificateOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
+  DollarOutlined,
 } from "@ant-design/icons";
 
 const { Text } = Typography;
@@ -53,31 +54,43 @@ const ValidationCard = ({ validation }) => {
           <Text strong style={{ fontSize: 12, display: "block", marginBottom: 4, marginTop: 8 }}>
             {section}
           </Text>
-          {sectionChecks.map((c, idx) => (
-            <div key={idx} className="validation-grid validation-grid-row">
-              <span>
-                {c.passed ? (
-                  <CheckCircleFilled style={{ color: "#52c41a", fontSize: 14 }} />
-                ) : (
-                  <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 14 }} />
-                )}
-              </span>
-              <Text style={{ fontSize: 12 }}>{c.check}</Text>
-              <Text type="secondary" style={{ fontSize: 12, textAlign: "right" }}>
-                {c.declared}
-              </Text>
-              <Text
-                style={{
+          {sectionChecks.map((c, idx) => {
+            const isPL = section === "P&L Summary";
+            const isNetResult = isPL && c.check === "Net Result";
+
+            return (
+              <div key={idx} className={`validation-grid validation-grid-row ${isNetResult ? "validation-net-result" : ""}`}>
+                <span>
+                  {isPL ? (
+                    <DollarOutlined style={{ color: "#D4891A", fontSize: 14 }} />
+                  ) : c.passed ? (
+                    <CheckCircleFilled style={{ color: "#52c41a", fontSize: 14 }} />
+                  ) : (
+                    <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 14 }} />
+                  )}
+                </span>
+                <Text style={{
                   fontSize: 12,
-                  textAlign: "right",
-                  color: c.passed ? undefined : "#ff4d4f",
-                  fontWeight: c.passed ? "normal" : 600,
-                }}
-              >
-                {c.computed}
-              </Text>
-            </div>
-          ))}
+                  fontWeight: isNetResult ? 600 : "normal",
+                }}>
+                  {c.check}
+                </Text>
+                <Text type="secondary" style={{ fontSize: 12, textAlign: "right" }}>
+                  {c.declared}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    textAlign: "right",
+                    color: isPL ? undefined : c.passed ? undefined : "#ff4d4f",
+                    fontWeight: isNetResult ? 600 : c.passed ? "normal" : 600,
+                  }}
+                >
+                  {c.computed}
+                </Text>
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>
