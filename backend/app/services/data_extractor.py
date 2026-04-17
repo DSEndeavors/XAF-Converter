@@ -356,15 +356,6 @@ def build_trial_balance(
         m_d = mut_debit.get(acc_id, Decimal("0"))
         m_c = mut_credit.get(acc_id, Decimal("0"))
 
-        # Year summary = opening + mutations (both sides)
-        year_d = ob_d + m_d
-        year_c = ob_c + m_c
-
-        # End balance = net of year summary
-        net = year_d - year_c
-        end_d = net if net > 0 else Decimal("0")
-        end_c = -net if net < 0 else Decimal("0")
-
         row = {
             "accID": acc_id,
             "accDesc": info["accDesc"],
@@ -373,10 +364,6 @@ def build_trial_balance(
             "ob_credit": float(ob_c),
             "mut_debit": float(m_d),
             "mut_credit": float(m_c),
-            "year_debit": float(year_d),
-            "year_credit": float(year_c),
-            "end_debit": float(end_d),
-            "end_credit": float(end_c),
         }
 
         if acc_tp == "P":

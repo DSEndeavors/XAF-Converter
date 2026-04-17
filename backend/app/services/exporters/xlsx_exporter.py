@@ -199,7 +199,13 @@ def _write_trial_balance_sheet(
     header_fill: PatternFill,
     header_alignment: Alignment,
 ) -> None:
-    """Write the Trial Balance tab at position 1 (after Validation)."""
+    """Write the Trial Balance tab at position 1 (after Validation).
+
+    Uses Excel formulas:
+    - Data rows: Year = Opening + Mutations, End = net of Year (IF formula)
+    - Subtotals: SUM over data rows
+    - Grand total: sum of subtotal rows
+    """
     ws = wb.create_sheet(title="Trial Balance", index=1)
 
     # Column widths
@@ -215,18 +221,20 @@ def _write_trial_balance_sheet(
         cell.alignment = header_alignment
 
     current_row = 2
+    subtotal_rows: list[int] = []  # track subtotal row numbers for grand total
 
     # Balance section
     if balance_rows:
-        current_row = _write_tb_section(ws, current_row, "Balance Sheet Accounts", balance_rows)
+        current_row, sub_row = _write_tb_section(ws, current_row, "Balance Sheet Accounts", balance_rows)
+        subtotal_rows.append(sub_row)
 
     # P&L section
     if pl_rows:
-        current_row = _write_tb_section(ws, current_row, "Profit & Loss Accounts", pl_rows)
+        current_row, sub_row = _write_tb_section(ws, current_row, "Profit & Loss Accounts", pl_rows)
+        subtotal_rows.append(sub_row)
 
-    # Grand total
-    all_rows = balance_rows + pl_rows
-    _write_tb_total_row(ws, current_row, "Grand Total", all_rows, GRAND_TOTAL_FILL, GRAND_TOTAL_FONT)
+    # Grand total — sums the subtotal rows
+    _write_tb_grand_total(ws, current_row, subtotal_rows, GRAND_TOTAL_FILL, GRAND_TOTAL_FONT)
 
     # Freeze top row
     ws.freeze_panes = "A2"
@@ -237,11 +245,14 @@ def _write_tb_section(
     start_row: int,
     section_title: str,
     rows: list[dict[str, Any]],
-) -> int:
-    """Write a section (Balance or P&L) and return the next row number."""
+) -> tuple[int, int]:
+    """Write a section (Balance or P&L).
+
+    Returns (next_row, subtotal_row) so the grand total can reference subtotals.
+    """
     row_num = start_row
 
-    # Section header row (merged across all columns)
+    # Section header row
     cell = ws.cell(row=row_num, column=1, value=section_title)
     cell.font = SECTION_HEADER_FONT
     cell.fill = SECTION_HEADER_FILL
@@ -249,51 +260,100 @@ def _write_tb_section(
         ws.cell(row=row_num, column=col).fill = SECTION_HEADER_FILL
     row_num += 1
 
-    # Data rows
-    num_fields = ["ob_debit", "ob_credit", "mut_debit", "mut_credit",
-                  "year_debit", "year_credit", "end_debit", "end_credit"]
+    # Value fields written as literal numbers (columns C–F)
+    value_fields = ["ob_debit", "ob_credit", "mut_debit", "mut_credit"]
+    data_first_row = row_num
 
     for r in rows:
         ws.cell(row=row_num, column=1, value=r["accID"])
         ws.cell(row=row_num, column=2, value=r["accDesc"])
-        for col_idx, field_name in enumerate(num_fields, 3):
+
+        # Columns C(3)–F(6): Opening Debit, Opening Credit, Debit, Credit
+        for col_idx, field_name in enumerate(value_fields, 3):
             val = r.get(field_name, 0.0)
             cell = ws.cell(row=row_num, column=col_idx)
             if val:
                 cell.value = val
-                cell.number_format = _TB_NUM_FMT
+            cell.number_format = _TB_NUM_FMT
+
+        # Column G(7): Year Debit = Opening Debit + Mutations Debit
+        cell = ws.cell(row=row_num, column=7)
+        cell.value = f"=C{row_num}+E{row_num}"
+        cell.number_format = _TB_NUM_FMT
+
+        # Column H(8): Year Credit = Opening Credit + Mutations Credit
+        cell = ws.cell(row=row_num, column=8)
+        cell.value = f"=D{row_num}+F{row_num}"
+        cell.number_format = _TB_NUM_FMT
+
+        # Column I(9): End Debit = IF(Year Debit > Year Credit, difference, 0)
+        cell = ws.cell(row=row_num, column=9)
+        cell.value = f"=IF(G{row_num}-H{row_num}>0,G{row_num}-H{row_num},0)"
+        cell.number_format = _TB_NUM_FMT
+
+        # Column J(10): End Credit = IF(Year Credit > Year Debit, difference, 0)
+        cell = ws.cell(row=row_num, column=10)
+        cell.value = f"=IF(H{row_num}-G{row_num}>0,H{row_num}-G{row_num},0)"
+        cell.number_format = _TB_NUM_FMT
+
         row_num += 1
 
-    # Subtotal row
-    _write_tb_total_row(ws, row_num, f"Subtotal {section_title}", rows, SUBTOTAL_FILL, SUBTOTAL_FONT)
+    data_last_row = row_num - 1
+
+    # Subtotal row with SUM formulas over data rows
+    subtotal_row = row_num
+    _write_tb_subtotal(ws, subtotal_row, f"Subtotal {section_title}",
+                       data_first_row, data_last_row, SUBTOTAL_FILL, SUBTOTAL_FONT)
     row_num += 1
 
     # Blank separator row
     row_num += 1
 
-    return row_num
+    return row_num, subtotal_row
 
 
-def _write_tb_total_row(
+def _write_tb_subtotal(
     ws,
     row_num: int,
     label: str,
-    rows: list[dict[str, Any]],
+    data_first: int,
+    data_last: int,
     fill: PatternFill,
     font: Font,
 ) -> None:
-    """Write a subtotal or grand total row with summed values."""
-    num_fields = ["ob_debit", "ob_credit", "mut_debit", "mut_credit",
-                  "year_debit", "year_credit", "end_debit", "end_credit"]
-
+    """Write a subtotal row with SUM formulas over a data range."""
     ws.cell(row=row_num, column=1, value=label).font = font
     ws.cell(row=row_num, column=1).fill = fill
     ws.cell(row=row_num, column=2).fill = fill
 
-    for col_idx, field_name in enumerate(num_fields, 3):
-        total = sum(r.get(field_name, 0.0) for r in rows)
+    # SUM formulas for columns C(3) through J(10)
+    for col_idx in range(3, 11):
+        col_letter = get_column_letter(col_idx)
         cell = ws.cell(row=row_num, column=col_idx)
-        cell.value = total if total else None
+        cell.value = f"=SUM({col_letter}{data_first}:{col_letter}{data_last})"
+        cell.number_format = _TB_NUM_FMT
+        cell.font = font
+        cell.fill = fill
+
+
+def _write_tb_grand_total(
+    ws,
+    row_num: int,
+    subtotal_rows: list[int],
+    fill: PatternFill,
+    font: Font,
+) -> None:
+    """Write a grand total row that sums the subtotal rows."""
+    ws.cell(row=row_num, column=1, value="Grand Total").font = font
+    ws.cell(row=row_num, column=1).fill = fill
+    ws.cell(row=row_num, column=2).fill = fill
+
+    for col_idx in range(3, 11):
+        col_letter = get_column_letter(col_idx)
+        # Build formula like =C5+C12 referencing the subtotal rows
+        parts = [f"{col_letter}{r}" for r in subtotal_rows]
+        cell = ws.cell(row=row_num, column=col_idx)
+        cell.value = f"={'+'.join(parts)}"
         cell.number_format = _TB_NUM_FMT
         cell.font = font
         cell.fill = fill
